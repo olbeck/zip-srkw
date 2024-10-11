@@ -1,0 +1,1205 @@
+---
+title: "Killer Whale ZIP GLMM"
+author: "Olivia Beck"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+
+## General Set Up
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = F)
+knitr::opts_chunk$set(warning = F)
+
+### Libraries ----------------------------
+# data package 
+library(aninet) #https://github.com/MNWeiss/aninet
+
+# for plotting
+library(ggplot2) 
+
+# for creating design matrix
+library(dplyr)
+library(tidyr)
+
+# igraph objects + functions
+library(igraph) 
+
+# parallelization is used in simulation
+library(foreach) 
+library(parallel) 
+
+# model estimation
+library(GLMMadaptive) 
+library(MASS) 
+
+# library(glmmTMB) Laplace model fitting algorithm
+# library(centiserve) Other centrality statistics
+
+# Other needed Functions 
+source("funcs/simulation-funcs.R")# function to run simulation
+source("funcs/munk-czado-funcs.R") # functions to calculate trimmed mallows distance
+source("funcs/whale-plot-funcs.R") # functions to make plots
+
+### Setting up Parallelization  ----------------------
+n.cores <- parallel::detectCores() -1 
+
+my.cluster <- parallel::makeCluster(
+  n.cores, 
+  type = "PSOCK"
+)
+my.cluster
+
+doParallel::registerDoParallel(cl = my.cluster)
+
+paste(("is registered:"), (foreach::getDoParRegistered()))
+
+paste(("workers:"), (foreach::getDoParWorkers()))
+
+
+```
+
+## Section 0: Plotting the Raw Data
+
+### Build the Surfacing Data
+
+```{r}
+### load the data ---------------------
+### Bulding Whale graph
+gwhale.contact <- graph_from_adjacency_matrix(srkw_contact, 
+                                              mode = "undirected",
+                                              weighted = T)
+
+gwhale.surface <- graph_from_adjacency_matrix(srkw_surfacing, 
+                                              mode = "undirected",
+                                              weighted = T)
+
+n <- gorder(gwhale.contact)
+  
+  
+### clusters -------------------------
+set.seed(252784)
+m0 <- factor(srkw_attributes$matriline, labels = 1:6)
+m1 <- cluster_walktrap(gwhale.contact, steps = 3)$membership
+m2 <- cluster_leading_eigen(gwhale.contact)$membership
+m3 <- cluster_infomap(gwhale.contact, E(gwhale.contact)$weight, modularity = T)$membership
+m4 <- cluster_fluid_communities(gwhale.contact, 4)$membership
+
+m5 <- cluster_walktrap(gwhale.surface, steps = 3)$membership
+m6 <- cluster_leading_eigen(gwhale.surface)$membership
+m7 <- cluster_infomap(gwhale.surface, E(gwhale.surface)$weight, modularity = T)$membership
+#cluster_edge_closeness(gwhale.surface, weights = log(E(gwhale.surface)$weight + 1, base = 10))$membership
+m8 <- cluster_fluid_communities(gwhale.surface, 4)$membership
+
+### Node Positions for plotting 
+
+# Define the string
+position.raw <- 
+  "id,age,sex,asc,matriline,X,Y
+  J40,15,0,af,J14s,4.5,0.5
+  J45,10,1,im,J14s,3.25,0.59
+  J31,24,0,af,J11s,3.75,4.5
+  J35,21,0,af,J17s,0,2.5
+  J39,16,1,am,J11s,3.5,3.25
+  J44,10,1,im,J17s,-1,4.5
+  J53,4,0,im,J17s,0.8,3.75
+  J56,0,0,im,J11s,4.5,2.5
+  J47,9,1,im,J17s,-1,3.5
+  J26,28,1,am,J16s,-2.6,2.25
+  J37,18,0,af,J14s,2.25,0
+  J38,16,1,am,J22s,-4.25,0.25
+  J41,14,0,af,J19s,0,-1.5
+  J46,10,0,im,J17s,0.25,5
+  J49,7,1,im,J14s,3.75,-0.25
+  J42,12,0,af,J16s,-4,2.25
+  J22,34,0,af,J22s,-3.5,-0.5
+  J27,28,1,am,J11s,5.25,3.75
+  J19,40,0,af,J19s,-0.5,-0.5
+  J51,4,1,im,J19s,-1.75,-1.25
+  J16,47,0,af,J16s,-5,2.75
+  J36,20,0,af,J16s,-3.5,3"
+
+# Read the string into a data frame
+node_df <- read.csv(textConnection(position.raw))
+node_positions <- as.matrix(node_df[, c("X", "Y")])
+
+```
+
+
+
+### Surface Data Plots 
+
+```{r}
+size = scales::rescale(srkw_attributes$age, c(7,20))
+r = range(c(E(gwhale.surface)$weight,E(gwhale.contact)$weight ))
+
+width.surface = (E(gwhale.surface)$weight - min(E(gwhale.surface))) /( r[2] - r[1])
+width.surface = width.surface * (10 - 0.5) + 0.5
+
+
+# color palett for matrilines
+palett0 <- c( "#9c179e", "#22a884", "#f0f921", "#fca636" ,"#414487", "#e16462"  )
+p0 <- palett0[m0]
+
+#funtion to get edge colors 
+get_egdge_colors <- function(w){
+  max.w <- max(w)
+  prop.w <- log(w) / log(max.w)
+  scaled.prop.w <- prop.w / 2 + 1/2
+  edge.color <- 
+    sapply(scaled.prop.w, 
+           function(x){adjustcolor( "black", alpha.f = x)})
+  return(edge.color)
+  
+}
+
+plot(gwhale.surface,
+     layout = node_positions,
+     vertex.label = V(gwhale.surface)$name,
+     vertex.label.cex = 1,
+     vertex.label.color = "black",
+     vertex.color = p0,
+     vertex.size = size + 5,
+     vertex.shape = ifelse(srkw_attributes$sex==0, "circle", "square"),
+     vertex.frame.color = NA,
+     edge.width =width.surface,
+     edge.color =get_egdge_colors(E(gwhale.surface)$weight )
+)
+
+
+```
+
+
+### Contact Data Plots 
+
+
+```{r}
+#edge widths for plotting
+width.contact = (E(gwhale.contact)$weight - min(E(gwhale.contact))) /( r[2] - r[1])
+width.contact = width.contact * (10 - 0.5) + 0.5
+
+
+#assign cluster colors 
+palett1 <- c("#f0f921", "#f89540", "#e16462", "#0d0887", "#9c179e" )
+palett2 <- c( "#9c179e","#0d0887",   "#f89540",   "#f0f921", "#e16462")
+
+palett3 <- c("#9c179e", "#e16462", "#f0f921" )
+  #c( "#9c179e", "#fca636",   "#0d0887", "#e16462", "#6a00a8", "#f0f921")
+palett4 <- c( "#f89540", "#9c179e",  "#0d0887", "#f0f921")
+
+p1 <- palett1[m1]
+p2 <- palett2[m2]
+p3 <- palett3[m3]
+p4 <- palett4[m4]
+
+
+
+plot(gwhale.contact,
+     layout = node_positions,
+     vertex.label = V(gwhale.contact)$name,
+     vertex.label.cex = 1,
+     vertex.label.color = "black",
+     vertex.color = p0,
+     vertex.size = size + 5,
+     vertex.shape = ifelse(srkw_attributes$sex==0, "circle", "square"),
+     vertex.frame.color = NA,
+     edge.width =width.contact,
+     edge.color =get_egdge_colors(E(gwhale.contact)$weight )
+)
+
+
+
+
+plot(gwhale.contact, 
+     layout = node_positions,
+     vertex.label = NA,
+     #vertex.label.color = "black",
+     vertex.color = p1,
+     vertex.frame.color = NA,
+     main= "(A) Walktrap", 
+     edge.width =width.contact,
+     edge.color = "black")
+
+plot(gwhale.contact, 
+     layout = node_positions,
+     vertex.label = NA,
+     #vertex.label.color = "black",
+     vertex.color = p2,
+     vertex.frame.color = NA,
+     main= "(B) Leading Eigenvalue", 
+     edge.width =width.contact,
+     edge.color = "black")
+
+plot(gwhale.contact, 
+     layout = node_positions,
+     vertex.label = NA,
+     #vertex.label.color = "black",
+     vertex.color = p3,
+     vertex.frame.color = NA,
+     main= "(C) Infomap", 
+     edge.width = width.contact,
+     edge.color = "black")
+
+plot(gwhale.contact, 
+     layout = node_positions,
+     vertex.label = NA,
+     #vertex.label.color = "black",
+     vertex.color = p4,
+     vertex.frame.color = NA,
+     main= "(D) Fluid Communities", 
+     edge.width =width.contact,
+     edge.color = "black")
+```
+
+
+
+## Section 1: Surfacing Data and Simulation
+
+### Raw Centrality Statistics 
+
+```{r}
+### Centrality Needed for Simulation - Surfacing -----------------
+
+
+whale.degree <- degree(gwhale.surface)
+whale.strength <- strength(gwhale.surface)
+whale.eigen <- eigen_centrality(gwhale.surface)$vector
+whale.close <- igraph::closeness(gwhale.surface, normalized = T) 
+whale.between <- igraph::betweenness(gwhale.surface, normalized = T)
+dat.plot.true <- data.frame(degree.sim = whale.degree,
+                            strength.sim = whale.strength,
+                            eigen.sim = whale.eigen,
+                            close.sim = whale.close ,
+                            between.sim = whale.between,
+                            id = 20000)
+
+```
+
+
+### Build the Design Matrix
+
+```{r}
+
+#### Design Matrix ----------------------------------
+
+mother.calf <- data.frame(
+  mother = c("J16", "J16", "J16", "J37", "J35", "J22", "J31", "J19", "J41"),
+  calf =   c("J26", "J26", "J42", "J49", "J47", "J38", "J56", "J41", "J51")
+)
+
+
+
+#seetins up ASC2 
+srkw_attributes <- 
+  srkw_attributes %>% 
+  dplyr::mutate(ASC2 = case_when(
+    sex == 0 & age < 7 ~ "IM", #imature
+    sex == 1 & age < 10 ~ "IM", #imature
+    sex == 0 & age >=7 & age <38 ~ "RF", #reproductive age female 
+    sex == 1 & age >=10 ~ "RM", #reproductive age male
+    sex == 0 & age >=38 ~ "PF" #post reproductive age female
+  )) %>% 
+  dplyr::mutate(RA = case_when(
+    sex == 0 & age < 7 ~ "IM", #imature
+    sex == 1 & age < 10 ~ "IM", #imature
+    sex == 0 & age >=7 & age <38 ~ "R", #reproductive age female 
+    sex == 1 & age >=10 ~ "R", #reproductive age male
+    sex == 0 & age >=38 ~ "P" #post reproductive age female
+  ))
+
+
+
+
+## Make Design Matrix
+
+design.matrix <- as.data.frame(t(combn(1:n, 2)))
+
+design.matrix[, c("name1", "name2", 
+                  "kinship", "is.mother", 
+                  "age1", "age2", "agediff",
+                  "sex1", "sex2", "samesex", "sexgroup", "mategroup",
+                  "t1", "t2", "t12", "tdiff",
+                  "surface", "contact",
+                  "m1", "m2",
+                  "ASCi", "ASCj", "mate")] <- NA
+
+
+
+for(i in 1:nrow(design.matrix)){
+  
+  #node numbers
+  v1 <- design.matrix$V1[i]
+  v2 <- design.matrix$V2[i]
+  
+  #node names
+  n1 <- design.matrix$name1[i] <- V(gwhale.contact)$name[v1]
+  n2 <- design.matrix$name2[i] <- V(gwhale.contact)$name[v2]
+  
+  #id
+  id1 <- srkw_attributes$id==n1
+  id2 <- srkw_attributes$id==n2
+  
+  
+  #kinship coefficent 
+  design.matrix$m1[i] <- srkw_attributes$matriline[id1]
+  design.matrix$m2[i] <- srkw_attributes$matriline[id2]
+  design.matrix$kinship[i] <- srkw_kinship[n1, n2]
+  design.matrix$is.mother[i] <- any(apply(mother.calf, 1,
+                                          function(row){all(row == c(n1, n2) | all(row == c(n2, n1)))
+                                          }))
+  
+  
+  #age coefficents
+  design.matrix$age1[i] <- srkw_attributes$age[id1]
+  design.matrix$age2[i] <- srkw_attributes$age[id2]
+  design.matrix$agediff[i] <- abs(design.matrix$age1[i] - design.matrix$age2[i] )
+  
+  #sex coefficent
+  design.matrix$sex1[i] <- ifelse(srkw_attributes$sex[id1] == 0, "F", "M")
+  design.matrix$sex2[i] <- ifelse(srkw_attributes$sex[id2] == 0, "F", "M")
+  design.matrix$samesex[i] <- design.matrix$sex1[i] == design.matrix$sex2[i]
+  
+  design.matrix$sexgroup[i] <- ifelse(!design.matrix$samesex[i], "N", design.matrix$sex1[i])
+  
+  #ASC 
+  design.matrix$ASCi[i] <- srkw_attributes$RA[id1]
+  design.matrix$ASCj[i] <- srkw_attributes$RA[id2]
+  design.matrix$mate[i] <- 
+    (srkw_attributes$ASC2[id1] == "RF" & srkw_attributes$ASC2[id2] == "RM") |
+    (srkw_attributes$ASC2[id1] == "RM" & srkw_attributes$ASC2[id2] == "RF")
+  
+  design.matrix$mategroup[i] <- 
+    case_when(
+      design.matrix$mate[i] == TRUE ~ "RA", 
+      design.matrix$sexgroup[i] == "F" ~ "F", 
+      design.matrix$sexgroup[i] == "M" ~ "M" ,
+      design.matrix$samesex[i] == F & any(srkw_attributes$RA[id1|id2] == "IM") ~ "NO", 
+      design.matrix$samesex[i] == F & any(srkw_attributes$RA[id1|id2] == "P") ~ "NO", 
+    )
+  
+  #Time of Filming 
+  design.matrix$t1[i] <- srkw_sampling[n1, n1]
+  design.matrix$t2[i] <- srkw_sampling[n2, n2] 
+  design.matrix$t12[i] <- srkw_sampling[n1, n2] 
+  design.matrix$tdiff[i] <- design.matrix$t1[i] + design.matrix$t2[i] -   design.matrix$t12[i]
+  
+  #response variables
+  design.matrix$contact[i] <- srkw_contact[n1, n2]
+  design.matrix$surface[i] <- srkw_surfacing[n1, n2]
+}
+
+
+design.matrix$is.mother <- as.factor(design.matrix$is.mother)
+design.matrix$mategroup <- as.factor(design.matrix$mategroup)
+design.matrix$samesex <- as.factor(design.matrix$samesex)
+
+
+## graph summary info
+sum(design.matrix$surface == 0) / nrow(design.matrix) * 100
+mean(design.matrix$surface[design.matrix$surface != 0])
+max(design.matrix$surface[design.matrix$surface != 0])
+
+sum(design.matrix$contact == 0) / nrow(design.matrix) * 100
+mean(design.matrix$contact[design.matrix$contact != 0])
+max(design.matrix$contact[design.matrix$contact != 0])
+
+
+
+```
+
+
+### Run the Surfacing Model Selection Simulation
+
+
+```{r}
+### Running The Simulation ------------------------
+n.models <- 2
+
+model_results_surface <- vector(mode = "list", length = n.models)
+simulation_results_surface <- vector(mode = "list", length = n.models)
+mallow_results_surface <- vector(mode = "list", length = n.models)
+
+
+
+set.seed(94353) 
+for(p in 1:n.models){
+  
+  #define cluster membership
+  membership <- m0
+  
+  #assign groups, group1 - group2 is the same as group2 - group1 because network is undirected
+  design.matrix$group <- NA
+  for(i in 1:nrow(design.matrix)){
+    mm1 <- membership[srkw_attributes$id == design.matrix$name1[i]]
+    mm2 <-  membership[srkw_attributes$id == design.matrix$name2[i]]
+    
+    # design.matrix$group[i] <- mm1 == mm2
+    # design.matrix$group[i] <- (as.numeric(as.character(mm1)) * (mm1 == mm2))
+    design.matrix$group[i] <- paste0(sort(c(mm1, mm2)), collapse = "")
+
+  }
+  design.matrix$group <- as.factor(design.matrix$group)
+  
+  
+  
+  #################################
+  ### Modeling 
+  #################################
+  
+  ### GLMADAPTIVE
+  # ZIP with Random Effects
+  # removing kinship from the zero inflated part because the hessian is uninvertible. 
+  
+  n_groups <- length(levels(design.matrix$group) )
+  #levels(design.matrix$group) <-  LETTERS[1:10]
+  #design.matrix$group
+  
+  if(p == 1){
+    mod_zir <-
+      GLMMadaptive::mixed_model(
+        fixed = surface ~  mategroup*agediff+ is.mother*agediff + log(tdiff + 1), 
+        random = ~ 1| as.factor(group), 
+        data = design.matrix,
+        family = GLMMadaptive::zi.poisson(), 
+        zi_fixed = surface ~   mategroup * agediff +log(tdiff + 1) , #no is mother because no 0's in surfacing
+        zi_random = ~ 1 | as.factor(group),
+        max_coef_value = 10000)
+  }else if(p==2){
+    mod_zir <-
+      GLMMadaptive::mixed_model(
+        fixed = surface ~ samesex*agediff+ log(tdiff + 1), 
+        random = ~ 1| as.factor(group), 
+        data = design.matrix,
+        family = GLMMadaptive::zi.poisson(), 
+        zi_fixed = surface ~   samesex * agediff+log(tdiff + 1) , #no is mother because no 0's in surfacing
+        zi_random = ~ 1 | as.factor(group),
+        max_coef_value = 10000)
+  }
+  
+  
+  model_results_surface[[p]] <- mod_zir
+  
+  #######################################
+  ### Running the simulations 
+  #######################################
+  
+  NSIM = 10000
+  
+  # 3. ZIP with Random Effects 1
+  simulation_results_surface[[p]]  <- sim_results(mod_zir , design.matrix, NSIM)
+  mallow_results_surface[[p]] <- mallow_test(simulation_results_surface[[p]])
+  
+}
+```
+
+### General Model Summary Information 
+
+#### Model 1
+
+```{r}
+summary(model_results_surface[[1]])
+marginal_coefs(model_results_surface[[1]], std_errors = TRUE)
+```
+
+#### Model 2
+
+```{r}
+summary(model_results_surface[[2]])
+marginal_coefs(model_results_surface[[2]], std_errors = TRUE)
+```
+
+#### AIC and BIC
+
+```{r}
+lapply(model_results_surface, BIC)
+lapply(model_results_surface, AIC)
+```
+
+
+### Model Validation - Counts
+
+#### Model 1
+
+```{r}
+# From GLMMadaptive vignettes
+set.seed(28397)
+## Model 1
+par(mar = c(2.5, 2.5, 0, 0), mgp = c(1.1, 0.5, 0), cex.axis = 0.7, cex.lab = 0.8)
+y <- design.matrix$surface
+y[y > 0] <- log(y[y > 0])
+x_vals <- seq(min(y), max(y), length.out = 500)
+out <- simulate(model_results_surface[[1]], nsim = 100, acount_MLEs_var = TRUE)
+ind <- out > sqrt(.Machine$double.eps)
+out[ind] <- log(out[ind])
+rep_y <- apply(out, 2, function (x, x_vals) ecdf(x)(x_vals), x_vals = x_vals)
+matplot(x_vals, rep_y, type = "l", lty = 1, col = "lightgrey", 
+        xlab = "log(Response)", ylab = "Empirical CDF")
+lines(x_vals, ecdf(y)(x_vals))
+legend("bottomright", c("Simulated data           ", "Observed data      "), lty = 1, 
+       col = c("lightgrey", "black"), bty = "n", cex = 0.8)
+
+```
+
+
+#### Model 2
+
+```{r}
+set.seed(783495)
+
+### Model 2 
+par(mar = c(2.5, 2.5, 0, 0), mgp = c(1.1, 0.5, 0), cex.axis = 0.7, cex.lab = 0.8)
+y <- design.matrix$surface
+y[y > 0] <- log(y[y > 0])
+x_vals <- seq(min(y), max(y), length.out = 500)
+out <- simulate(model_results_surface[[2]], nsim = 100, acount_MLEs_var = TRUE)
+ind <- out > sqrt(.Machine$double.eps)
+out[ind] <- log(out[ind])
+rep_y <- apply(out, 2, function (x, x_vals) ecdf(x)(x_vals), x_vals = x_vals)
+matplot(x_vals, rep_y, type = "l", lty = 1, col = "lightgrey", 
+        xlab = "log(Response)", ylab = "Empirical CDF")
+lines(x_vals, ecdf(y)(x_vals))
+legend("bottomright", c("Simulated data           ", "Observed data      "), lty = 1, 
+       col = c("lightgrey", "black"), bty = "n", cex = 0.8)
+
+```
+
+
+### Model Vaildation - Zeros 
+
+#### Model 1
+
+```{r}
+
+###Plotting Zero Inflation factors -----------------------
+# Manually predict the zero-inflation probabilities
+zi_predictions <- 
+  GLMMadaptive::predict(
+    model_results_surface[[1]], 
+    design.matrix, 
+    type = "zero_part" )
+
+# Create a data frame with predicted values and the original data
+predicted_df <- data.frame(
+  group = design.matrix$group,
+  surface = design.matrix$surface,
+  samesex = design.matrix$samesex,
+  zi_prob = zi_predictions
+)
+
+
+
+# Use ggplot to visualize
+
+## Zero Probabilities 
+set.seed(9348724)
+predicted_df %>% 
+  mutate(is.zero = surface == 0) %>%
+  filter(grepl("2", group)) %>% 
+  ggplot(aes(x = group, y = zi_prob, color = is.zero)) +
+  geom_jitter(width = 0.15, height = 0) +
+  labs(title = "Predicted Zero-Inflation Probabilities", 
+       subtitle = "Matrilineal Line J14's",
+       y = "Zero-Inflation Probability", x = "Matrilineal Line") +
+  scale_x_discrete(labels = c("J11s", "J14s", "J16s", "J17s", "J19s", "J22s")) +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero")) +
+  theme_minimal()
+
+
+
+
+
+#Verify if the predictions make sense
+design.matrix %>% 
+  dplyr::select(group, surface) %>% 
+  group_by(group) %>% 
+  summarise(zeros = sum(surface == 0),
+            count = n()) %>% 
+  filter(grepl("2", group))
+
+design.matrix %>% 
+  dplyr::select(group, surface) %>% 
+  group_by(group) %>%
+  filter(surface>0) %>%
+  summarise(nzavg = mean(surface),
+            count = n()) %>% 
+  filter(grepl("1", group))
+
+table(srkw_attributes$matriline)
+
+design.matrix %>% 
+  dplyr::select(group, surface) %>% 
+  filter(surface>0) %>% 
+  filter(grepl("1", group)) %>%
+  ggplot(aes(x = group, y = surface)) +
+  geom_point()
+
+design.matrix %>% 
+  dplyr::select(group, surface)  %>% 
+  filter(grepl("1", group)) %>% 
+  ggplot(aes(x = surface)) +
+  geom_histogram() +
+  facet_wrap(~ group)
+```
+
+#### Model 2 
+
+```{r}
+
+###Plotting Zero Inflation factors -----------------------
+# Manually predict the zero-inflation probabilities
+zi_predictions <- 
+  GLMMadaptive::predict(
+    model_results_surface[[2]], 
+    design.matrix, 
+    type = "zero_part" )
+
+# Create a data frame with predicted values and the original data
+predicted_df <- data.frame(
+  group = design.matrix$group,
+  surface = design.matrix$surface,
+  samesex = design.matrix$samesex,
+  zi_prob = zi_predictions
+)
+
+
+
+# Use ggplot to visualize
+
+## Zero Probabilities 
+ set.seed(4545)
+predicted_df %>% 
+  mutate(is.zero = surface == 0) %>%
+  filter(grepl("2", group)) %>% 
+  ggplot(aes(x = group, y = zi_prob, color = is.zero)) +
+  geom_jitter(width = 0.15, height = 0) +
+  labs(title = "Predicted Zero-Inflation Probabilities", 
+       subtitle = "Matrilineal Line J14's",
+       y = "Zero-Inflation Probability", x = "Matrilineal Line") +
+  scale_x_discrete(labels = c("J11s", "J14s", "J16s", "J17s", "J19s", "J22s")) +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero")) +
+  theme_minimal()
+
+
+
+
+
+#Verify if the predictions make sense
+design.matrix %>% 
+  dplyr::select(group, surface) %>% 
+  group_by(group) %>% 
+  summarise(zeros = sum(surface == 0),
+            count = n()) %>% 
+  filter(grepl("2", group))
+
+design.matrix %>% 
+  dplyr::select(group, surface) %>% 
+  group_by(group) %>%
+  filter(surface>0) %>%
+  summarise(nzavg = mean(surface),
+            count = n()) %>% 
+  filter(grepl("1", group))
+
+table(srkw_attributes$matriline)
+
+design.matrix %>% 
+  dplyr::select(group, surface) %>% 
+  filter(surface>0) %>% 
+  filter(grepl("1", group)) %>%
+  ggplot(aes(x = group, y = surface)) +
+  geom_point()
+
+design.matrix %>% 
+  dplyr::select(group, surface)  %>% 
+  filter(grepl("1", group)) %>% 
+  ggplot(aes(x = surface)) +
+  geom_histogram() +
+  facet_wrap(~ group)
+```
+
+
+### Subject predicted responses
+
+For all predicted values, if $\hat{y}_{ij} < 0.5$, then $\hat{y}_{ij}$ is considered a prediced zero.  
+
+
+#### Model 1 Predictions
+
+```{r}
+
+
+subject_predictions <- GLMMadaptive::predict(
+    model_results_surface[[1]], 
+    design.matrix, 
+    type = "subject_specific" ) 
+
+
+subject_predictions_df <- data.frame(
+  group = design.matrix$group,
+  surface = design.matrix$surface,
+  samesex = design.matrix$samesex,
+  pred = subject_predictions
+)
+# number of predicted zeros vs true zeros 
+subject_predictions_df %>%
+  mutate(predict.zero = pred < 0.5) %>% 
+  group_by(group) %>% 
+  summarise(zi_predictions = sum(predict.zero),
+            zi_true = sum(surface==0),
+            count = n()) %>% 
+  filter(grepl("2", group))
+
+set.seed(989)
+subject_predictions_df %>% 
+  mutate(predict.zero = pred < 0.5) %>%
+  mutate(is.zero = surface ==0) %>%
+  filter(grepl("2", group)) %>% 
+  ggplot(aes(x = group, y = pred, color = is.zero)) +
+  geom_jitter(width = 0.15, height = 0) +
+  labs(title = "Predicted Response - Subject Specific", 
+       subtitle = "Matrilineal Line J14's",
+       y = "Counts of Surfacing", x = "Matrilineal Line") +
+  scale_x_discrete(labels = c("J11s", "J14s", "J16s", "J17s", "J19s", "J22s")) +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero")) +
+  theme_minimal()+
+  theme(panel.grid.major = element_line(color = "darkgray"))
+
+
+## Error plot 
+subject_predictions_df %>% 
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred ) %>%
+  mutate(is.zero = surface ==0) %>%
+  ggplot(aes(x = surface, y = error)) +
+  geom_point() +
+  facet_wrap(~is.zero, scales = "free" )+
+  xlab("True Observation") +
+  ylab("Relative Error") +
+  ggtitle("Relative Error Vs True Observation") +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero"))
+  
+```
+
+#### Model 1 Error 
+
+```{r}
+subject_predictions_df %>% 
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred ) %>%
+  mutate(is.zero = surface ==0) %>%
+  filter(!is.zero) %>% 
+  ggplot(aes(x = surface, y = error)) +
+  geom_point() +
+  #facet_wrap(~is.zero, scales = "free" )+
+  xlab("True Observation") +
+  ylab("Error") +
+  ggtitle("Error Vs True Counts Observation") +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero"))
+
+subject_predictions_df %>% 
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred ) %>%
+  mutate(is.zero = surface ==0) %>%
+  filter(pred >= 0.5) %>% 
+  ggplot(aes(x = surface, y = rel_error)) +
+  geom_point() +
+  #facet_wrap(~is.zero, scales = "free" )+
+  xlab("True Observation") +
+  ylab("Relative Error") +
+  ggtitle("Relative  of Counts Predictions Vs True Observation") +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero"))
+
+subject_predictions_df %>% 
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred ) %>%
+  mutate(is.zero = surface ==0) %>%
+  filter(is.zero) %>% 
+  ggplot(aes(x = surface, y = abs(error))) +
+  geom_boxplot(coeff = 1000) +
+  #facet_wrap(~is.zero, scales = "free" )+
+  xlab("True Observation") +
+  ylab("Absolute Error") +
+  ggtitle("Absolute Error Vs True Observation") +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero")) +
+  theme_minimal()
+
+```
+
+
+
+#### Model 2 Predictions
+
+```{r}
+
+
+subject_predictions <- GLMMadaptive::predict(
+    model_results_surface[[2]], 
+    design.matrix, 
+    type = "subject_specific" ) 
+
+
+subject_predictions_df <- data.frame(
+  group = design.matrix$group,
+  surface = design.matrix$surface,
+  samesex = design.matrix$samesex,
+  pred = subject_predictions
+)
+# number of predicted zeros vs true zeros 
+subject_predictions_df %>%
+  mutate(predict.zero = pred < 0.5) %>% 
+  group_by(group) %>% 
+  summarise(zi_predictions = sum(predict.zero),
+            zi_true = sum(surface==0),
+            count = n()) %>% 
+  filter(grepl("2", group))
+
+set.seed(989)
+subject_predictions_df %>% 
+  mutate(predict.zero = pred < 0.5) %>%
+  mutate(is.zero = surface ==0) %>%
+  filter(grepl("2", group)) %>% 
+  ggplot(aes(x = group, y = pred, color = is.zero)) +
+  geom_jitter(width = 0.15, height = 0) +
+  labs(title = "Predicted Response - Subject Specific", 
+       subtitle = "Matrilineal Line J14's",
+       y = "Counts of Surfacing", x = "Matrilineal Line") +
+  scale_x_discrete(labels = c("J11s", "J14s", "J16s", "J17s", "J19s", "J22s")) +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero")) +
+  theme_minimal()+
+  theme(panel.grid.major = element_line(color = "darkgray"))
+```
+
+
+#### Model 2 Error 
+
+```{r}
+subject_predictions_df %>% 
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred ) %>%
+  mutate(is.zero = surface ==0) %>%
+  filter(!is.zero) %>% 
+  ggplot(aes(x = surface, y = error)) +
+  geom_point() +
+  #facet_wrap(~is.zero, scales = "free" )+
+  xlab("True Observation") +
+  ylab("Error") +
+  ggtitle("Error Vs True Counts Observation") +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero"))
+
+subject_predictions_df %>% 
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred ) %>%
+  mutate(is.zero = surface ==0) %>%
+  filter(pred >= 0.5) %>% 
+  ggplot(aes(x = surface, y = rel_error)) +
+  geom_point() +
+  #facet_wrap(~is.zero, scales = "free" )+
+  xlab("True Observation") +
+  ylab("Relative Error") +
+  ggtitle("Relative  of Counts Predictions Vs True Observation") +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero"))
+
+subject_predictions_df %>% 
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred ) %>%
+  mutate(is.zero = surface ==0) %>%
+  filter(is.zero) %>% 
+  ggplot(aes(x = surface, y = abs(error))) +
+  geom_boxplot(coeff = 1000) +
+  #facet_wrap(~is.zero, scales = "free" )+
+  xlab("True Observation") +
+  ylab("Absolute Error") +
+  ggtitle("Absolute Error Vs True Observation") +
+  scale_color_manual(values = c("#F8766D", "#619CFF"),
+                     name = "True Observation",
+                     labels = c("Count", "Zero")) +
+  theme_minimal()
+
+
+```
+
+
+### ECDF Plots 
+
+```{r}
+#### ECDF Plots ----------------------
+
+dist_plots_surface <- plot_ecdf(simulation_results_surface)
+
+egg::ggarrange(plots = dist_plots_surface$eigen, 
+               nrow = 1, ncol = n.models)
+
+egg::ggarrange(plots = dist_plots_surface$close, 
+               nrow = 1, ncol = n.models)
+
+```
+
+
+
+### Mallows/Wasserstein Distance Plots 
+
+```{r}
+wass_plots_testing <- plot_wass_density_surface(mallow_results_surface)
+wass_plots_testing[[1]]
+wass_plots_testing[[2]]
+```
+
+
+#### Marginal Effects Plots for Model 2
+
+```{r}
+
+# Interaction plots --------------------------
+### Model 2
+nDF2 <- with(design.matrix, 
+             expand.grid(agediff = seq(min(agediff), 40, length.out = 30),
+                         samesex = levels(samesex),
+                         tdiff = quantile(tdiff, c(0.25, 0.5, 0.75)),
+                         group = levels(group)))
+nDF2$surface <- predict(model_results_surface[[2]], nDF2)  
+
+marginal_coefs(model_results_surface[[2]], std_errors = TRUE)
+
+#model_results_surface[[2]]$model_frames
+#fitted(model_results_surface[[2]], type = "subject_specific")
+
+nDF2 <- with(design.matrix, 
+             expand.grid(agediff = seq(min(agediff), 40, length.out = 30),
+                         samesex = levels(samesex),
+                         tdiff =  quantile(tdiff, c(0.4, 0.6, 0.8)),
+                         group = levels(group)))
+
+# get marginal effects
+nMM2 <- model.matrix(~ samesex*agediff + log(tdiff+1), data = nDF2)
+
+marg.counts <- marginal_coefs(model_results_surface[[2]], std_errors = T)
+betac <- marginal_coefs(model_results_surface[[2]])# (as.matrix(model_results_surface[[2]]$coefficients))
+betac <- as.matrix(betac$betas)
+head(nMM2)
+
+nDF2$pred <- nMM2 %*% betac
+
+
+sex.labs <- c("Opposite Sexes", "Same Sex")
+names(sex.labs) <- c(FALSE, TRUE)
+
+ggplot(nDF2, aes(x = agediff, color = as.factor(tdiff))) +
+  geom_line(aes(y = exp(pred))) + 
+  facet_wrap(~samesex,
+             labeller = labeller(samesex = sex.labs)) +
+  scale_color_manual(values = c("#F8766D", "#00BA38", "#619CFF"),
+                     labels = c("0.4", "0.6", "0.8"),
+                     name = "Quantile of Film \nCo-Occurrence") +
+  xlab("Age Difference") + 
+  ylab("E(Count)") +
+  ggtitle("Expected Marginal Effects for the Surfacing Counts") + 
+  theme_minimal() +
+  theme(axis.line.x = element_line())+
+  scale_y_continuous(expand=c(0,1.5)) +
+  scale_x_continuous(expand=c(0,0.5)) +
+  geom_vline(xintercept=0)
+
+```
+
+
+
+
+## Section 2: Contact Network - Picking the best cluster
+
+### Setting up Needed information 
+
+```{r}
+
+# store centrality statistics for plotting later
+whale.degree <- degree(gwhale.contact)
+whale.strength <- strength(gwhale.contact)
+whale.eigen <- eigen_centrality(gwhale.contact)$vector
+whale.close <- closeness(gwhale.contact, normalized = T)
+whale.between <- betweenness(gwhale.contact, normalized = T)
+dat.plot.true <- data.frame(degree.sim = whale.degree,
+                            strength.sim = whale.strength,
+                            eigen.sim =whale.eigen,
+                            between.sim = whale.between,
+                            close.sim = whale.close,
+                            id = 20000)
+
+
+```
+
+
+### Running the Contact network simulation 
+
+```{r}
+set.seed(43453)
+model_results <- vector(mode = "list", length = 4)
+simulation_results <- vector(mode = "list", length = 4)
+mallow_results <- vector(mode = "list", length = 4)
+
+set.seed(9941429) 
+for(p in 1:4){
+
+  # make design matrix 
+  design.matrix <- as.data.frame(t(combn(1:n, 2)))
+
+  #define cluster membership
+  membership <- 
+    case_when(
+    p == 1 ~ m1,
+    p == 2 ~ m2,
+    p == 3 ~ m3,
+    p == 4 ~ m4
+  )
+  
+  
+  design.matrix[, c("name1", "name2", 
+                    "kinship", 
+                    "age1", "age2", "agediff",
+                    "sex1", "sex2", "samesex", 
+                    "t1", "t2", "t12", "tdiff",
+                    "surface", "contact",
+                    "m1", "m2")] <- NA
+  
+  
+  
+  for(i in 1:nrow(design.matrix)){
+    
+    v1 <- design.matrix$V1[i]
+    v2 <- design.matrix$V2[i]
+    
+    n1 <- design.matrix$name1[i] <- V(gwhale.contact)$name[v1]
+    n2 <- design.matrix$name2[i] <- V(gwhale.contact)$name[v2]
+    
+    design.matrix$m1[i] <- membership[v1]
+    design.matrix$m2[i] <- membership[v2]
+    
+    design.matrix$kinship[i] <- srkw_kinship[n1, n2]
+    
+    design.matrix$age1[i] <- srkw_attributes$age[srkw_attributes$id == n1]
+    design.matrix$age2[i] <- srkw_attributes$age[srkw_attributes$id == n2]
+    design.matrix$agediff[i] <- abs(design.matrix$age1[i] - design.matrix$age2[i] )
+    
+    design.matrix$sex1[i] <- srkw_attributes$sex[srkw_attributes$id == n1]
+    design.matrix$sex2[i] <- srkw_attributes$sex[srkw_attributes$id == n2]
+    design.matrix$samesex[i] <- design.matrix$sex1[i] == design.matrix$sex2[i]
+    
+    design.matrix$t1[i] <- srkw_sampling[n1, n1]
+    design.matrix$t2[i] <- srkw_sampling[n2, n2] 
+    design.matrix$t12[i] <- srkw_sampling[n1, n2] 
+    design.matrix$tdiff[i] <- design.matrix$t1[i] + design.matrix$t2[i] -   design.matrix$t12[i]
+    
+    design.matrix$contact[i] <- srkw_contact[n1, n2]
+    design.matrix$surface[i] <- srkw_surfacing[n1, n2]
+  
+}
+
+
+#assign groups, group1 - group2 is the same as group2 - group1 because network is undirected
+design.matrix$group <- NA
+for(i in 1:nrow(design.matrix)){
+  mm1 <- design.matrix$m1[i]
+  mm2 <- design.matrix$m2[i]
+  
+  design.matrix$group[i] <- paste0(sort(c(mm1, mm2)), collapse = "")
+  
+}
+
+
+design.matrix$group <- as.factor(design.matrix$group)
+design.matrix$samesex <- as.factor(design.matrix$samesex)
+
+
+
+
+#################################
+### Modeling 
+#################################
+
+### GLMADAPTIVE
+# ZIP with Random Effects
+# removing kinship from the zero inflated part because the hessian is uninvertible. 
+
+n_groups <- length(levels(design.matrix$group) )
+#levels(design.matrix$group) <-  LETTERS[1:10]
+#design.matrix$group
+
+
+mod_zir <-
+  GLMMadaptive::mixed_model(
+    fixed = contact ~ agediff * samesex+ log(tdiff + 1), 
+    random = ~ 1| as.factor(group), 
+    data = design.matrix,
+    family = GLMMadaptive::zi.poisson(), 
+    zi_fixed = contact ~ agediff * samesex +  log(tdiff + 1) ,
+    zi_random = ~ 1 | as.factor(group),
+    max_coef_value = 10000)
+
+
+model_results[[p]] <- mod_zir
+
+#######################################
+### Running the simulations 
+#######################################
+
+NSIM = 10000
+
+# 3. ZIP with Random Effects 1
+simulation_results[[p]]  <- sim_results(mod_zir , design.matrix, NSIM)
+mallow_results[[p]] <- mallow_test(simulation_results[[p]])
+
+}
+
+```
+
+### Model Summary
+
+```{r}
+lapply(model_results, summary)
+
+```
+
+
+### ECDF Plots 
+
+```{r}
+
+
+dist_plots <- plot_ecdf(simulation_results)
+egg::ggarrange(plots = dist_plots$eigen,
+               nrow = 1, ncol = 4)
+egg::ggarrange(plots = dist_plots$close,
+               nrow = 1, ncol = 4)
+
+```
+
+
+### Mallows/Wasserstin Distance Plots 
+
+```{r}
+wass_plots <- plot_wass_density_contact(mallow_results )
+wass_plots[[1]]
+wass_plots[[2]]
+```
+
+
