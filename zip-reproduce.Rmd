@@ -518,6 +518,30 @@ lapply(model_results_surface, BIC)
 lapply(model_results_surface, AIC)
 ```
 
+### Posterior Modes 
+
+```{r}
+post.modes1 <- model_results_surface[[1]]$post_modes
+post.modes2 <- model_results_surface[[2]]$post_modes
+
+post.modes <- cbind(post.modes1, post.modes2) 
+colnames(post.modes) <- c("Counts1", "Zeros1", "Counts2", "Zeros2")
+post.modes <- 
+  post.modes %>% 
+  as.data.frame() %>%
+  mutate_all(round, 3)
+
+matrilines <- c("J11s" , "J14s", "J16s", "J17s", "J19s", "J22s")
+post.modes <-
+  unique(t(apply(expand.grid(matrilines, matrilines), 1, sort))) %>% 
+  as.data.frame() %>% 
+  mutate(names = paste0(V1, "-", V2)) %>% 
+  cbind(post.modes) %>% 
+  dplyr::select(-c(V1, V2))
+
+post.modes
+```
+
 
 ### Model Validation - Counts
 
@@ -612,38 +636,79 @@ predicted_df %>%
 
 
 
+### Estimated Zero Inflation Probabilities
+# "outlier" of (9, 0.42) is J16-J42 which are mother-and-daughter (35 year age diff)
+# "outlier" of (9, 0.12) is J19-J51 which are grandmother-and-grandson
+# their physical attributes (fixed effects) suggest they may not surface together often
+# but their familial relationship (random effects) suggests they do surface often
+# only fixed effects are shown in this plot
+predicted_df %>% 
+  mutate(is.zero = surface == 0) %>% 
+  ggplot(aes(x = surface, y = zi_prob)) +
+  geom_point() +
+  xlim(0, 25) +
+  theme_minimal() +
+  xlab("Observed Surfacings") +
+  ylab("Zero Inflation Probabilty Estimate") 
+
+### Maximum ZI prob over 25
+predicted_df %>% 
+  mutate(is.zero = surface == 0) %>% 
+  filter(surface > 25) %>% 
+  arrange(zi_prob) %>% 
+  tail(1)
+
+
+predicted_df %>% 
+  mutate(is.zero = surface == 0) %>% 
+  left_join(
+    post.modes %>% 
+      dplyr::select(names, Zeros1)%>% 
+      mutate(group = factor(names, labels = levels(design.matrix$group)))
+  ) %>% 
+  mutate(step1 = LaplacesDemon::logit(zi_prob)) %>% 
+  mutate(step2 = step1 + Zeros1) %>% 
+  mutate(step3 = LaplacesDemon::invlogit(step2)) %>% 
+  ggplot(aes(x = surface, y = step3)) +
+  geom_point() +
+  xlim(0, 25) +
+  theme_minimal() +
+  ggtitle("ZI Probs with Random Effects")+
+  xlab("Observed Surfacings") +
+  ylab("Zero Inflation Probabilty Estimate") 
+
 
 #Verify if the predictions make sense
-design.matrix %>% 
-  dplyr::select(group, surface) %>% 
-  group_by(group) %>% 
-  summarise(zeros = sum(surface == 0),
-            count = n()) %>% 
-  filter(grepl("2", group))
+# design.matrix %>% 
+#   dplyr::select(group, surface) %>% 
+#   group_by(group) %>% 
+#   summarise(zeros = sum(surface == 0),
+#             count = n()) %>% 
+#   filter(grepl("2", group))
 
-design.matrix %>% 
-  dplyr::select(group, surface) %>% 
-  group_by(group) %>%
-  filter(surface>0) %>%
-  summarise(nzavg = mean(surface),
-            count = n()) %>% 
-  filter(grepl("1", group))
-
-table(srkw_attributes$matriline)
-
-design.matrix %>% 
-  dplyr::select(group, surface) %>% 
-  filter(surface>0) %>% 
-  filter(grepl("1", group)) %>%
-  ggplot(aes(x = group, y = surface)) +
-  geom_point()
-
-design.matrix %>% 
-  dplyr::select(group, surface)  %>% 
-  filter(grepl("1", group)) %>% 
-  ggplot(aes(x = surface)) +
-  geom_histogram() +
-  facet_wrap(~ group)
+# design.matrix %>% 
+#   dplyr::select(group, surface) %>% 
+#   group_by(group) %>%
+#   filter(surface>0) %>%
+#   summarise(nzavg = mean(surface),
+#             count = n()) %>% 
+#   filter(grepl("1", group))
+# 
+# table(srkw_attributes$matriline)
+# 
+# design.matrix %>% 
+#   dplyr::select(group, surface) %>% 
+#   filter(surface>0) %>% 
+#   filter(grepl("1", group)) %>%
+#   ggplot(aes(x = group, y = surface)) +
+#   geom_point()
+# 
+# design.matrix %>% 
+#   dplyr::select(group, surface)  %>% 
+#   filter(grepl("1", group)) %>% 
+#   ggplot(aes(x = surface)) +
+#   geom_histogram() +
+#   facet_wrap(~ group)
 ```
 
 #### Model 2 
@@ -688,39 +753,62 @@ predicted_df %>%
 
 
 
+### Estimated Zero Inflation Probabilities
+# "outlier" of (9, 0.48) is J16-J42 which are mother-and-daughter (35 year age diff)
+# "outlier" of (9, 0.19) is J19-J51 which are grandmother-and-grandson (36 year age diff)
+# their physical attributes (fixed effects) suggest they may not surface together often
+# but their familial relationship (random effects) suggests they do surface often
+# only fixed effects are shown in this plot
+predicted_df %>% 
+  mutate(is.zero = surface == 0) %>% 
+  ggplot(aes(x = surface, y = zi_prob)) +
+  geom_point() +
+  xlim(0, 25) +
+  theme_minimal() +
+  xlab("Observed Surfacings") +
+  ylab("Zero Inflation Probabilty Estimate") 
 
 
-#Verify if the predictions make sense
-design.matrix %>% 
-  dplyr::select(group, surface) %>% 
-  group_by(group) %>% 
-  summarise(zeros = sum(surface == 0),
-            count = n()) %>% 
-  filter(grepl("2", group))
+### Maximum ZI prob over 25
+predicted_df %>% 
+  mutate(is.zero = surface == 0) %>% 
+  filter(surface > 25) %>% 
+  arrange(zi_prob) %>% 
+  tail(1)
 
-design.matrix %>% 
-  dplyr::select(group, surface) %>% 
-  group_by(group) %>%
-  filter(surface>0) %>%
-  summarise(nzavg = mean(surface),
-            count = n()) %>% 
-  filter(grepl("1", group))
-
-table(srkw_attributes$matriline)
-
-design.matrix %>% 
-  dplyr::select(group, surface) %>% 
-  filter(surface>0) %>% 
-  filter(grepl("1", group)) %>%
-  ggplot(aes(x = group, y = surface)) +
-  geom_point()
-
-design.matrix %>% 
-  dplyr::select(group, surface)  %>% 
-  filter(grepl("1", group)) %>% 
-  ggplot(aes(x = surface)) +
-  geom_histogram() +
-  facet_wrap(~ group)
+# 
+# 
+# #Verify if the predictions make sense
+# design.matrix %>% 
+#   dplyr::select(group, surface) %>% 
+#   group_by(group) %>% 
+#   summarise(zeros = sum(surface == 0),
+#             count = n()) %>% 
+#   filter(grepl("2", group))
+# 
+# design.matrix %>% 
+#   dplyr::select(group, surface) %>% 
+#   group_by(group) %>%
+#   filter(surface>0) %>%
+#   summarise(nzavg = mean(surface),
+#             count = n()) %>% 
+#   filter(grepl("1", group))
+# 
+# table(srkw_attributes$matriline)
+# 
+# design.matrix %>% 
+#   dplyr::select(group, surface) %>% 
+#   filter(surface>0) %>% 
+#   filter(grepl("1", group)) %>%
+#   ggplot(aes(x = group, y = surface)) +
+#   geom_point()
+# 
+# design.matrix %>% 
+#   dplyr::select(group, surface)  %>% 
+#   filter(grepl("1", group)) %>% 
+#   ggplot(aes(x = surface)) +
+#   geom_histogram() +
+#   facet_wrap(~ group)
 ```
 
 
@@ -755,29 +843,32 @@ subject_predictions_df %>%
             count = n()) %>% 
   filter(grepl("2", group))
 
-set.seed(989)
-subject_predictions_df %>% 
+subject_predictions_df <- 
+  subject_predictions_df %>%
   mutate(predict.zero = pred < 0.5) %>%
   mutate(is.zero = surface ==0) %>%
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred ) 
+
+## Plot for predicted coutns 
+set.seed(989)
+subject_predictions_df %>% 
   filter(grepl("2", group)) %>% 
+  filter(!predict.zero) %>%
   ggplot(aes(x = group, y = pred, color = is.zero)) +
   geom_jitter(width = 0.15, height = 0) +
-  labs(title = "Predicted Response - Subject Specific", 
-       subtitle = "Matrilineal Line J14's",
+  labs(title = "Predicted Counts - Subject Specific", 
+       subtitle = "With Matrilineal Line J14's",
        y = "Counts of Surfacing", x = "Matrilineal Line") +
   scale_x_discrete(labels = c("J11s", "J14s", "J16s", "J17s", "J19s", "J22s")) +
   scale_color_manual(values = c("#F8766D", "#619CFF"),
                      name = "True Observation",
                      labels = c("Count", "Zero")) +
-  theme_minimal()+
-  theme(panel.grid.major = element_line(color = "darkgray"))
+  theme_minimal()#+theme(panel.grid.major = element_line(color = "darkgray"))
 
 
 ## Error plot 
 subject_predictions_df %>% 
-  mutate(error = surface - pred) %>%
-  mutate(rel_error = error / pred ) %>%
-  mutate(is.zero = surface ==0) %>%
   ggplot(aes(x = surface, y = error)) +
   geom_point() +
   facet_wrap(~is.zero, scales = "free" )+
@@ -787,16 +878,14 @@ subject_predictions_df %>%
   scale_color_manual(values = c("#F8766D", "#619CFF"),
                      name = "True Observation",
                      labels = c("Count", "Zero"))
-  
+
+
 ```
 
 #### Model 1 Error 
 
 ```{r}
 subject_predictions_df %>% 
-  mutate(error = surface - pred) %>%
-  mutate(rel_error = error / pred ) %>%
-  mutate(is.zero = surface ==0) %>%
   filter(!is.zero) %>% 
   ggplot(aes(x = surface, y = error)) +
   geom_point() +
@@ -809,9 +898,6 @@ subject_predictions_df %>%
                      labels = c("Count", "Zero"))
 
 subject_predictions_df %>% 
-  mutate(error = surface - pred) %>%
-  mutate(rel_error = error / pred ) %>%
-  mutate(is.zero = surface ==0) %>%
   filter(pred >= 0.5) %>% 
   ggplot(aes(x = surface, y = rel_error)) +
   geom_point() +
@@ -824,9 +910,6 @@ subject_predictions_df %>%
                      labels = c("Count", "Zero"))
 
 subject_predictions_df %>% 
-  mutate(error = surface - pred) %>%
-  mutate(rel_error = error / pred ) %>%
-  mutate(is.zero = surface ==0) %>%
   filter(is.zero) %>% 
   ggplot(aes(x = surface, y = abs(error))) +
   geom_boxplot(coeff = 1000) +
@@ -838,6 +921,31 @@ subject_predictions_df %>%
                      name = "True Observation",
                      labels = c("Count", "Zero")) +
   theme_minimal()
+
+
+### Error for the true counts
+subject_predictions_df %>% 
+  filter(!is.zero) %>%
+  ggplot(aes(x = surface, y = error)) +
+  geom_point() +
+  #facet_wrap(~is.zero, scales = "free" )+
+  xlab("Observed Counts") +
+  ylab("Error") +
+  ggtitle("Error vs Observed Counts") +
+  xlim(0, 75) + # removes one point at (162, -11)
+  theme_minimal()
+
+# Error for the True zeros
+subject_predictions_df %>% 
+  filter(is.zero) %>%
+  ggplot(aes( x = abs(error))) +
+  geom_histogram(bins = 10) +
+  #facet_wrap(~is.zero, scales = "free" )+
+  ylab("Frequency") +
+  xlab("Absolute Error") +
+  ggtitle("Distribution of Absolute Errors for Observed Zeros") +
+  theme_minimal() 
+  
 
 ```
 
@@ -856,6 +964,7 @@ subject_predictions <- GLMMadaptive::predict(
 
 subject_predictions_df <- data.frame(
   group = design.matrix$group,
+  is.mother = design.matrix$is.mother,
   surface = design.matrix$surface,
   samesex = design.matrix$samesex,
   pred = subject_predictions
@@ -868,6 +977,14 @@ subject_predictions_df %>%
             zi_true = sum(surface==0),
             count = n()) %>% 
   filter(grepl("2", group))
+
+
+subject_predictions_df <- 
+  subject_predictions_df %>%
+  mutate(predict.zero = pred < 0.5) %>%
+  mutate(is.zero = surface ==0) %>%
+  mutate(error = surface - pred) %>%
+  mutate(rel_error = error / pred )
 
 set.seed(989)
 subject_predictions_df %>% 
@@ -937,6 +1054,28 @@ subject_predictions_df %>%
                      labels = c("Count", "Zero")) +
   theme_minimal()
 
+
+
+### Error for the true counts
+subject_predictions_df %>% 
+  filter(!is.zero) %>%
+  ggplot(aes(x = surface, y = error)) +
+  geom_point() +
+  xlab("Observed Count") +
+  ylab("Error") +
+  ggtitle("Error vs Observed Counts") +
+  xlim(0, 75) + # removes one point at (162, -4.3)
+  theme_minimal()
+
+# Error for the True zeros
+subject_predictions_df %>% 
+  filter(is.zero) %>%
+  ggplot(aes( x = abs(error))) +
+  geom_histogram(bins = 10) +
+  ylab("Frequency") +
+  xlab("Absolute Error") +
+  ggtitle("Distribution of Absolute Errors for Observed Zeros") +
+  theme_minimal() 
 
 ```
 
